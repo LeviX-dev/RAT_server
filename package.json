@@ -1,0 +1,22 @@
+{
+  "name": "advanced-socket-server",
+  "version": "1.0.0",
+  "description": "Node.js multithreaded socket server with authentication and file handling",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --inspect server.js"
+  },
+  "keywords": [
+    "socket",
+    "server",
+    "net",
+    "authentication",
+    "multithreaded"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+} 
